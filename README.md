@@ -1,9 +1,9 @@
 1.Clone the repository
 
 ```
-git clone https://github.com/sonjoy07/nodejs-typescripts.git
+git clone https://github.com/sonjoy07/nodejs-typescripts-graphql-redis-crud.git
 ```
-2.cd nodejs-typescripts
+2.cd nodejs-typescripts-graphql-redis-crud
 
 ```
 npm install
