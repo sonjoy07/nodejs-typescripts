@@ -2,16 +2,19 @@ import { GraphQLBoolean } from "graphql";
 
 const graphql = require('graphql');
 const Categories = require('./models/category');
-import { createClient } from 'redis';
+import redis,{ createClient } from 'redis';
 
 
 const redisPort:any = process.env.REDISPORT;
+const user = '123'
 
-const client = createClient()
-client.on('connect',()=>{
-    console.log('redis connected');
-    
+const client = createClient({
+    legacyMode: true
 })
+redisConnect()
+async function redisConnect(){
+    await client.connect()
+}
 
 const {
     GraphQLObjectType,
@@ -52,7 +55,7 @@ const Category = new GraphQLObjectType({
         },
         parentCategory: {
             type: Category,
-            resolve: async (parent: Icategory, args: any) => {
+            resolve: async (parent: Icategory, _args: any) => {
                 const data = await Categories.findById(parent.parentId)
                 return data
             }
@@ -66,12 +69,16 @@ const RootQuery = new GraphQLObjectType({
         categories: {
             type: new GraphQLList(Category),
             resolve:async()=> {
-                const categories =  Categories.find();
-                client.setEx('categories',3600,categories);
-                // const cache = await client.get('categories')
-                // console.log(cache);
-                
-                // if()
+                const categories = await Categories.find().exec();
+                const cache:any = await client.lRange('categories',0,-1)
+                // client.get('categories', redis.print);
+                console.log('cache',cache)
+                if(categories === cache){
+                    return JSON.parse(cache)
+                }else{
+                    client.setEx('categories',3600,JSON.stringify(categories))
+                    return categories
+                }
             },
         },
         category: {
@@ -79,7 +86,7 @@ const RootQuery = new GraphQLObjectType({
             args: {
                 id: { type: GraphQLID },
             },
-            resolve(parent: Icategory, args: Icategory) {
+            resolve(_parent: Icategory, args: Icategory) {
                 return Categories.findById(args.id);
             },
         },
@@ -94,7 +101,7 @@ const Mutation = new GraphQLObjectType({
                 name: { type: GraphQLString },
                 parentId: { type: GraphQLID },
             },
-            resolve(parent: Icategory, args: Icategory) {
+            resolve(_parent: Icategory, args: Icategory) {
                 const category = new Categories({
                     name: args.name,
                     parentId: args.parentId,
@@ -129,7 +136,7 @@ const Mutation = new GraphQLObjectType({
             args: {
                 id: { type: GraphQLString },
             },
-            resolve: async (parent: Icategory, args: Icategory) => {
+            resolve: async (_parent: Icategory, args: Icategory) => {
                 return Categories.findByIdAndDelete({
                     _id: args.id,
                 });

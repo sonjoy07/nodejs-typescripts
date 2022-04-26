@@ -20,7 +20,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const redis_1 = require("redis");
 const client = (0, redis_1.createClient)();
 client.on('error', (err) => console.log('Redis Client Error', err));
-console.log(client.connect());
+//  console.log(client.connect());
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const port = process.env.PORT;
