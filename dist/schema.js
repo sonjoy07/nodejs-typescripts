@@ -8,22 +8,26 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const graphql_1 = require("graphql");
 const graphql = require('graphql');
 const Categories = require('./models/category');
-const redis_1 = require("redis");
-const redisPort = process.env.REDISPORT;
-const user = '123';
-const client = (0, redis_1.createClient)({
-    legacyMode: true
+const mongoose_1 = __importDefault(require("mongoose"));
+const Redis = require('ioredis');
+const redis = new Redis({
+    port: 6379,
+    host: '127.0.0.1',
 });
 redisConnect();
 function redisConnect() {
     return __awaiter(this, void 0, void 0, function* () {
-        yield client.connect();
+        yield redis.del('categories');
     });
 }
+// clear cache
 const { GraphQLObjectType, GraphQLList, GraphQLString, GraphQLSchema, GraphQLID, } = graphql;
 const Category = new GraphQLObjectType({
     name: 'Category',
@@ -62,15 +66,21 @@ const RootQuery = new GraphQLObjectType({
         categories: {
             type: new GraphQLList(Category),
             resolve: () => __awaiter(void 0, void 0, void 0, function* () {
-                const categories = yield Categories.find().exec();
-                const cache = yield client.lRange('categories', 0, -1);
-                // client.get('categories', redis.print);
-                console.log('cache', cache);
-                if (categories === cache) {
-                    return JSON.parse(cache);
+                const categories = yield Categories.find();
+                const listings = (yield redis.lrange('categories', 0, -1)) || [];
+                if (listings.length > 0) {
+                    const parseData = listings.map((x) => {
+                        const category = JSON.parse(x);
+                        category.id = new mongoose_1.default.Types.ObjectId(category.id);
+                        return category;
+                    });
+                    return parseData;
                 }
                 else {
-                    client.setEx('categories', 3600, JSON.stringify(categories));
+                    const listingStrings = categories.map((x) => JSON.stringify(x));
+                    if (listingStrings.length) {
+                        yield redis.lpush('categories', listingStrings);
+                    }
                     return categories;
                 }
             }),
@@ -95,14 +105,16 @@ const Mutation = new GraphQLObjectType({
                 name: { type: GraphQLString },
                 parentId: { type: GraphQLID },
             },
-            resolve(_parent, args) {
+            resolve: (_parent, args) => __awaiter(void 0, void 0, void 0, function* () {
                 const category = new Categories({
                     name: args.name,
                     parentId: args.parentId,
                     isActive: true
                 });
-                return category.save();
-            },
+                const saveData = yield category.save();
+                redis.lpush('categories', JSON.stringify(saveData));
+                return saveData;
+            }),
         },
         updateCategory: {
             type: Category,
@@ -116,13 +128,15 @@ const Mutation = new GraphQLObjectType({
                 if (args.isActive === false) {
                     const res = yield Categories.update({ id: parent === null || parent === void 0 ? void 0 : parent.parentId }, { isActive: false });
                 }
-                return Categories.findOneAndUpdate({
+                const updateData = yield Categories.findOneAndUpdate({
                     _id: args.id
                 }, {
                     name: args.name,
                     parentId: args.parentId,
                     isActive: args.isActive,
                 });
+                redis.del('categories');
+                return updateData;
             }),
         },
         deleteCategory: {
@@ -131,9 +145,11 @@ const Mutation = new GraphQLObjectType({
                 id: { type: GraphQLString },
             },
             resolve: (_parent, args) => __awaiter(void 0, void 0, void 0, function* () {
-                return Categories.findByIdAndDelete({
+                const deleteData = Categories.findByIdAndDelete({
                     _id: args.id,
                 });
+                redis.del('categories');
+                return deleteData;
             }),
         },
     },
