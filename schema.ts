@@ -2,19 +2,20 @@ import { GraphQLBoolean } from "graphql";
 
 const graphql = require('graphql');
 const Categories = require('./models/category');
-import redis,{ createClient } from 'redis';
+import mongoose from 'mongoose';
+const Redis = require('ioredis');
 
 
-const redisPort:any = process.env.REDISPORT;
-const user = '123'
-
-const client = createClient({
-    legacyMode: true
-})
+const redis = new Redis({
+    port: 6379,
+    host: '127.0.0.1',
+});
 redisConnect()
 async function redisConnect(){
-    await client.connect()
+  await redis.del('categories');
 }
+
+  // clear cache
 
 const {
     GraphQLObjectType,
@@ -68,17 +69,24 @@ const RootQuery = new GraphQLObjectType({
     fields: {
         categories: {
             type: new GraphQLList(Category),
-            resolve:async()=> {
-                const categories = await Categories.find().exec();
-                const cache:any = await client.lRange('categories',0,-1)
-                // client.get('categories', redis.print);
-                console.log('cache',cache)
-                if(categories === cache){
-                    return JSON.parse(cache)
-                }else{
-                    client.setEx('categories',3600,JSON.stringify(categories))
+            resolve: async () => {
+                const categories = await Categories.find();
+                const listings = (await redis.lrange('categories', 0, -1)) || [];
+                if (listings.length > 0) {
+                    const parseData = listings.map((x:any)=>{
+                        const category =  JSON.parse(x);
+                        category.id = new mongoose.Types.ObjectId(category.id)
+                        return category                        
+                    })                    
+                    return parseData;
+                } else {
+                    const listingStrings = categories.map((x: string) => JSON.stringify(x));
+                    if (listingStrings.length) {
+                        await redis.lpush('categories', listingStrings);
+                    }
                     return categories
                 }
+
             },
         },
         category: {
@@ -101,13 +109,15 @@ const Mutation = new GraphQLObjectType({
                 name: { type: GraphQLString },
                 parentId: { type: GraphQLID },
             },
-            resolve(_parent: Icategory, args: Icategory) {
+            resolve:async(_parent: Icategory, args: Icategory)=> {
                 const category = new Categories({
                     name: args.name,
                     parentId: args.parentId,
                     isActive: true
                 });
-                return category.save();
+                const saveData = await category.save();
+                redis.lpush('categories', JSON.stringify(saveData));                
+                return saveData
             },
         },
         updateCategory: {
@@ -122,13 +132,16 @@ const Mutation = new GraphQLObjectType({
                 if (args.isActive === false) {
                     const res = await Categories.update({ id: parent?.parentId }, { isActive: false });
                 }
-                return Categories.findOneAndUpdate({
+                const updateData = await Categories.findOneAndUpdate({
                     _id: args.id
                 }, {
                     name: args.name,
                     parentId: args.parentId,
                     isActive: args.isActive,
                 });
+                
+                redis.del('categories');
+                return updateData
             },
         },
         deleteCategory: {
@@ -137,9 +150,11 @@ const Mutation = new GraphQLObjectType({
                 id: { type: GraphQLString },
             },
             resolve: async (_parent: Icategory, args: Icategory) => {
-                return Categories.findByIdAndDelete({
+                const deleteData =  Categories.findByIdAndDelete({
                     _id: args.id,
                 });
+                redis.del('categories');
+                return deleteData
             },
         },
     },
